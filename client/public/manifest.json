@@ -1,0 +1,22 @@
+{
+  "name": "Codex — EPUB Reader",
+  "short_name": "Codex",
+  "description": "A clean, minimal EPUB reader for your local library",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#b35c1e",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
