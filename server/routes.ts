@@ -13,20 +13,7 @@ if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 if (!fs.existsSync(COVERS_DIR)) fs.mkdirSync(COVERS_DIR, { recursive: true });
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-    filename: (_req, file, cb) => {
-      const uniqueName = `${Date.now()}-${file.originalname}`;
-      cb(null, uniqueName);
-    },
-  }),
-  fileFilter: (_req, file, cb) => {
-    if (file.mimetype === "application/epub+zip" || file.originalname.endsWith(".epub")) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only EPUB files are allowed"));
-    }
-  },
+  dest: UPLOAD_DIR,
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
 });
 
@@ -59,70 +46,29 @@ export async function registerRoutes(
     res.json(book);
   });
 
-  // Upload a new book
+  // Upload a new book — just save the file, metadata is extracted client-side
   app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
       const filePath = req.file.path;
-      const fileName = req.file.originalname;
+      const fileName = req.file.originalname || "book.epub";
       const fileSize = req.file.size;
 
-      // Extract metadata from EPUB using epubjs on the server
-      let title = fileName.replace(/\.epub$/i, "");
-      let author = "Unknown";
-      let coverUrl: string | null = null;
+      // Rename file to have proper extension
+      const newPath = filePath + ".epub";
+      fs.renameSync(filePath, newPath);
 
-      try {
-        const EPub = (await import("epubjs")).default;
-        const bookData = fs.readFileSync(filePath);
-        const arrayBuffer = bookData.buffer.slice(
-          bookData.byteOffset,
-          bookData.byteOffset + bookData.byteLength
-        );
-        const epub = EPub(arrayBuffer as ArrayBuffer);
-        await epub.ready;
-
-        const metadata = epub.packaging?.metadata;
-        if (metadata?.title) title = metadata.title;
-        if (metadata?.creator) author = metadata.creator;
-
-        // Extract cover image
-        try {
-          const coverHref = epub.packaging?.coverPath;
-          if (coverHref) {
-            const coverResource = epub.resources?.get(coverHref);
-            if (coverResource) {
-              // Try to get cover from archive
-              const archive = (epub as any).archive;
-              if (archive) {
-                const coverData = await archive.getBlob(coverHref);
-                if (coverData) {
-                  const ext = path.extname(coverHref) || ".jpg";
-                  const coverFileName = `${Date.now()}-cover${ext}`;
-                  const coverPath = path.join(COVERS_DIR, coverFileName);
-                  const buffer = Buffer.from(await coverData.arrayBuffer());
-                  fs.writeFileSync(coverPath, buffer);
-                  coverUrl = `/api/covers/${coverFileName}`;
-                }
-              }
-            }
-          }
-        } catch (_e) {
-          // Cover extraction is best-effort
-        }
-
-        epub.destroy();
-      } catch (_e) {
-        // Metadata extraction is best-effort, we still save the book
-      }
+      // Use filename as initial title, client will update with proper metadata
+      const title = req.body.title || fileName.replace(/\.epub$/i, "");
+      const author = req.body.author || "Unknown";
 
       const book = await storage.createBook({
         title,
         author,
-        coverUrl,
+        coverUrl: null,
         fileName,
-        filePath,
+        filePath: newPath,
         fileSize,
         currentCfi: null,
         progress: 0,
@@ -131,16 +77,37 @@ export async function registerRoutes(
 
       res.json(book);
     } catch (error: any) {
+      console.error("Upload error:", error);
       res.status(500).json({ message: error.message || "Upload failed" });
     }
   });
 
-  // Update book progress
+  // Update book metadata/progress
   app.patch("/api/books/:id", async (req, res) => {
     const id = Number(req.params.id);
     const book = await storage.updateBook(id, req.body);
     if (!book) return res.status(404).json({ message: "Book not found" });
     res.json(book);
+  });
+
+  // Upload cover image for a book
+  app.post("/api/books/:id/cover", upload.single("cover"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      const id = Number(req.params.id);
+      const coverFileName = `${Date.now()}-cover-${id}.jpg`;
+      const coverPath = path.join(COVERS_DIR, coverFileName);
+      
+      // Move uploaded file to covers dir
+      fs.renameSync(req.file.path, coverPath);
+      const coverUrl = `/api/covers/${coverFileName}`;
+      
+      const book = await storage.updateBook(id, { coverUrl });
+      if (!book) return res.status(404).json({ message: "Book not found" });
+      res.json(book);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Cover upload failed" });
+    }
   });
 
   // Delete a book

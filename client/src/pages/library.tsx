@@ -22,6 +22,7 @@ export default function Library() {
   const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { theme, toggleTheme } = useTheme();
   const { toast } = useToast();
@@ -30,10 +31,12 @@ export default function Library() {
     queryKey: ["/api/books"],
   });
 
-  const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
+  const uploadBook = async (file: File) => {
+    setUploading(true);
+    try {
       const formData = new FormData();
       formData.append("file", file);
+
       const res = await fetch("./api/books", {
         method: "POST",
         body: formData,
@@ -42,16 +45,15 @@ export default function Library() {
         const err = await res.json();
         throw new Error(err.message || "Upload failed");
       }
-      return res.json();
-    },
-    onSuccess: () => {
+
       queryClient.invalidateQueries({ queryKey: ["/api/books"] });
       toast({ title: "Book added to library" });
-    },
-    onError: (error: Error) => {
+    } catch (error: any) {
       toast({ title: "Upload failed", description: error.message, variant: "destructive" });
-    },
-  });
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -67,7 +69,7 @@ export default function Library() {
     if (!files) return;
     Array.from(files).forEach((file) => {
       if (file.name.endsWith(".epub")) {
-        uploadMutation.mutate(file);
+        uploadBook(file);
       }
     });
   };
@@ -143,12 +145,12 @@ export default function Library() {
           />
           <Button
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploadMutation.isPending}
+            disabled={uploading}
             data-testid="button-upload"
             className="h-10 gap-2"
           >
             <Upload className="w-4 h-4" />
-            <span className="hidden sm:inline">Add Book</span>
+            <span className="hidden sm:inline">{uploading ? "Uploading..." : "Add Book"}</span>
           </Button>
         </div>
 
@@ -255,7 +257,7 @@ function BookCard({
           </div>
         )}
         {/* Hover overlay */}
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center pointer-events-none">
           <div className="opacity-0 group-hover:opacity-100 transition-opacity">
             <div className="bg-background/90 backdrop-blur-sm rounded-full p-3">
               <BookOpen className="w-5 h-5 text-foreground" />

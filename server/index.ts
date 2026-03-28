@@ -12,15 +12,24 @@ declare module "http" {
   }
 }
 
-app.use(
+app.use((req, res, next) => {
+  // Skip JSON parsing for multipart (file uploads)
+  if (req.headers['content-type']?.includes('multipart/form-data')) {
+    return next();
+  }
   express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
+    verify: (req2, _res, buf) => {
+      req2.rawBody = buf;
     },
-  }),
-);
+  })(req, res, next);
+});
 
-app.use(express.urlencoded({ extended: false }));
+app.use((req, res, next) => {
+  if (req.headers['content-type']?.includes('multipart/form-data')) {
+    return next();
+  }
+  express.urlencoded({ extended: false })(req, res, next);
+});
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

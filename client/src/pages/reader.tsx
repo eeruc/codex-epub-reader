@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
+import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
   ArrowLeft,
@@ -93,20 +94,30 @@ export default function Reader() {
   useEffect(() => {
     if (!book || !viewerRef.current) return;
 
-    const epub = ePub(`./api/books/${bookId}/file`);
-    epubRef.current = epub;
+    let destroyed = false;
 
-    const rendition = epub.renderTo(viewerRef.current, {
-      width: "100%",
-      height: "100%",
-      spread: "none",
-      flow: "paginated",
-    });
+    async function initEpub() {
+      if (!viewerRef.current) return;
 
-    renditionRef.current = rendition;
+      // Fetch EPUB as ArrayBuffer for reliable loading
+      const response = await fetch(`./api/books/${bookId}/file`);
+      const arrayBuffer = await response.arrayBuffer();
 
-    // Apply theme
-    const applyTheme = () => {
+      if (destroyed) return;
+
+      const epub = ePub(arrayBuffer);
+      epubRef.current = epub;
+
+      const rendition = epub.renderTo(viewerRef.current!, {
+        width: "100%",
+        height: "100%",
+        spread: "none",
+        flow: "paginated",
+      });
+
+      renditionRef.current = rendition;
+
+      // Apply theme
       rendition.themes.default({
         "body, p, span, div, h1, h2, h3, h4, h5, h6, li, a, em, strong, blockquote, figcaption, cite": {
           "color": theme === "dark" ? "#e0ddd8 !important" : "#2a2520 !important",
@@ -125,66 +136,90 @@ export default function Reader() {
           "color": theme === "dark" ? "#c9874d !important" : "#b35c1e !important",
         },
       });
-    };
 
-    applyTheme();
+      // Display book at saved position or beginning
+      const startCfi = book.currentCfi;
+      if (startCfi) {
+        rendition.display(startCfi);
+      } else {
+        rendition.display();
+      }
 
-    // Display book at saved position or beginning
-    const startCfi = book.currentCfi;
-    if (startCfi) {
-      rendition.display(startCfi);
-    } else {
-      rendition.display();
+      // Load TOC
+      epub.loaded.navigation.then((nav) => {
+        if (!destroyed) setToc(nav.toc || []);
+      });
+
+      // Extract and update metadata if still default
+      try {
+        await epub.ready;
+        const metadata = epub.packaging?.metadata;
+        if (metadata && (book.title === book.fileName?.replace(/\.epub$/i, '') || book.author === 'Unknown')) {
+          const updateData: Record<string, string> = {};
+          if (metadata.title) updateData.title = metadata.title;
+          if (metadata.creator) updateData.author = metadata.creator;
+          if (Object.keys(updateData).length > 0) {
+            await apiRequest("PATCH", `/api/books/${bookId}`, updateData);
+            queryClient.invalidateQueries({ queryKey: ["/api/books", bookId] });
+          }
+        }
+      } catch (e) {
+        console.log("Metadata extraction failed:", e);
+      }
+
+      // Track location changes
+      rendition.on("relocated", (location: any) => {
+        if (destroyed) return;
+        const cfi = location.start.cfi;
+        setCurrentCfi(cfi);
+
+        // Calculate progress
+        if (epub.locations && (epub.locations as any).total) {
+          const currentLocation = epub.locations.percentageFromCfi(cfi);
+          const pct = Math.round((currentLocation || 0) * 100);
+          setProgress(pct);
+          updateProgressMutation.mutate({ currentCfi: cfi, progress: pct });
+        }
+
+        // Update chapter title
+        if (location.start?.href) {
+          const tocItem = findTocItem(toc, location.start.href);
+          if (tocItem) setChapterTitle(tocItem.label?.trim() || "");
+        }
+      });
+
+      // Generate locations for progress tracking
+      try {
+        await epub.ready;
+        await epub.locations.generate(1024);
+        if (renditionRef.current && !destroyed) {
+          const currentLocation = renditionRef.current.currentLocation() as any;
+          if (currentLocation?.start?.cfi) {
+            const pct = Math.round((epub.locations.percentageFromCfi(currentLocation.start.cfi) || 0) * 100);
+            setProgress(pct);
+          }
+        }
+      } catch (e) {
+        console.log("Location generation failed:", e);
+      }
+
+      // Keyboard navigation inside iframe
+      rendition.on("keydown", (e: KeyboardEvent) => {
+        if (e.key === "ArrowLeft") rendition.prev();
+        if (e.key === "ArrowRight") rendition.next();
+      });
     }
 
-    // Load TOC
-    epub.loaded.navigation.then((nav) => {
-      setToc(nav.toc || []);
-    });
-
-    // Track location changes
-    rendition.on("relocated", (location: any) => {
-      const cfi = location.start.cfi;
-      setCurrentCfi(cfi);
-
-      // Calculate progress
-      if (epub.locations && (epub.locations as any).total) {
-        const currentLocation = epub.locations.percentageFromCfi(cfi);
-        const pct = Math.round((currentLocation || 0) * 100);
-        setProgress(pct);
-        updateProgressMutation.mutate({ currentCfi: cfi, progress: pct });
-      }
-
-      // Update chapter title
-      if (location.start?.href) {
-        const tocItem = findTocItem(toc, location.start.href);
-        if (tocItem) setChapterTitle(tocItem.label?.trim() || "");
-      }
-    });
-
-    // Generate locations for progress tracking
-    epub.ready.then(() => {
-      return epub.locations.generate(1024);
-    }).then(() => {
-      // Re-display to trigger relocated with locations
-      if (renditionRef.current) {
-        const currentLocation = renditionRef.current.currentLocation() as any;
-        if (currentLocation?.start?.cfi) {
-          const pct = Math.round((epub.locations.percentageFromCfi(currentLocation.start.cfi) || 0) * 100);
-          setProgress(pct);
-        }
-      }
-    });
-
-    // Keyboard navigation
-    rendition.on("keydown", (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") rendition.prev();
-      if (e.key === "ArrowRight") rendition.next();
-    });
+    initEpub().catch(console.error);
 
     return () => {
-      rendition.destroy();
-      epub.destroy();
+      destroyed = true;
+      if (renditionRef.current) {
+        try { renditionRef.current.destroy(); } catch (e) {}
+      }
+      if (epubRef.current) {
+        try { epubRef.current.destroy(); } catch (e) {}
+      }
     };
   }, [book?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
