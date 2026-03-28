@@ -16,6 +16,14 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      external: ["epubjs"],
+      output: {
+        globals: {
+          epubjs: "ePub",
+        },
+      },
+    },
   },
   server: {
     fs: {

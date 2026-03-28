@@ -24,8 +24,12 @@ import {
   Type,
 } from "lucide-react";
 import type { Book, Bookmark as BookmarkType } from "@shared/schema";
-import ePub from "epubjs";
-import type { Rendition, Book as EpubBook, NavItem } from "epubjs";
+// epub.js loaded via CDN (window.ePub) — externalized to avoid bundling
+// localStorage/indexedDB references in the main bundle
+const ePub = (window as any).ePub;
+type Rendition = any;
+type EpubBook = any;
+type NavItem = { id: string; href: string; label: string; subitems?: NavItem[] };
 
 export default function Reader() {
   const params = useParams<{ id: string }>();
