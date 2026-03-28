@@ -7,3 +7,6 @@ vite.config.ts.*
 *.db
 *.db-shm
 *.db-wal
+uploads/
+covers/
+test-*.png

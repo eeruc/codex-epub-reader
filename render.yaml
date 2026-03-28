@@ -1,0 +1,18 @@
+services:
+  - type: web
+    runtime: node
+    name: codex-epub-reader
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: NODE_ENV=production node dist/index.cjs
+    envVars:
+      - key: APP_PASSWORD
+        value: Zaibatsu
+      - key: PORT
+        value: "10000"
+      - key: NODE_VERSION
+        value: "20"
+    disk:
+      name: codex-data
+      mountPath: /opt/render/project/src/uploads
+      sizeGB: 1
